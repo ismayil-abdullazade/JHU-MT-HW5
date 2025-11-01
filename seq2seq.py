@@ -378,7 +378,7 @@ def translate(encoder, decoder, sentence, src_vocab, tgt_vocab, max_length=MAX_L
                     decoded_words.append(EOS_token)
                     break
                 decoded_words.append(tgt_vocab.index2word[topi.item()])
-                decoder_input = topi.squeeze().detach()
+                decoder_input = topi.squeeze(1).detach()
             
             return decoded_words, decoder_attentions[:di + 1]
 
@@ -579,4 +579,5 @@ def main():
     show_attention(input_sentence, output_words, attentions)
 
 if __name__ == '__main__':
+
     main()
