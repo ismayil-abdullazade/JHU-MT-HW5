@@ -1,10 +1,10 @@
 # Seq2Seq BLEU Score Improvements Summary
 
 ## Overview
-This document summarizes the significant improvements made to the seq2seq neural machine translation model, resulting in a **3x improvement** in BLEU score from 18.85 to 56.60.
+This document summarizes the significant improvements made to the seq2seq neural machine translation model, resulting in a **2.8x improvement** in BLEU score from 20.36 to 56.60.
 
 ## Baseline Performance
-- **Original BLEU Score**: 18.85 (beam size 5)
+- **Original BLEU Score**: 20.36 (beam size 5, 20k iterations)
 - **Architecture**: BiLSTM encoder + attention decoder
 - **Hidden Size**: 256
 - **Layers**: 1 layer each for encoder/decoder
@@ -40,10 +40,10 @@ This document summarizes the significant improvements made to the seq2seq neural
 
 | Stage | BLEU Score | Improvement | Key Changes |
 |-------|------------|-------------|-------------|
-| Baseline | 18.85 | - | Original model |
-| After 15k iters | 27.04 | +8.19 | Architecture improvements |
-| After 40k iters | 54.74 | +35.89 | Extended training |
-| Final (60k iters) | 56.60 | +37.75 | Optimal beam size + more training |
+| Baseline (20k iters) | 20.36 | - | Original model |
+| After 15k iters | 27.04 | +6.68 | Architecture improvements |
+| After 40k iters | 54.74 | +34.38 | Extended training |
+| Final (60k iters) | 56.60 | +36.24 | Optimal beam size + more training |
 
 ## Technical Implementation Details
 
@@ -99,7 +99,7 @@ The improved model shows significantly better translation quality:
 
 ## Conclusion
 
-The comprehensive improvements resulted in a **200% increase** in BLEU score (from 18.85 to 56.60), demonstrating the effectiveness of:
+The comprehensive improvements resulted in a **178% increase** in BLEU score (from 20.36 to 56.60), demonstrating the effectiveness of:
 - Proper model architecture scaling
 - Advanced regularization techniques
 - Optimized training procedures
