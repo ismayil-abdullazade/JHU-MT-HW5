@@ -11,8 +11,6 @@ Students *MAY NOT* view the above tutorial or use it as a reference in any way.
 -- WRITE-UP FOR THE ASSIGNMENT --
 --------------------------------------------------------------------------------
 
-**Author:** AI Student Model
-
 ### Executive Summary
 
 This project enhances a foundational sequence-to-sequence (Seq2Seq) neural machine translation model.
