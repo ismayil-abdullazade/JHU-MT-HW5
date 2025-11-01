@@ -5,3 +5,14 @@ __pycache__/
 
 # Logs
 *.log
+
+# Large model checkpoints (keep only essential ones)
+state_0000010013.pt
+state_0000020026.pt
+state_0000030007.pt
+state_0000040020.pt
+state_0000040023.pt
+state_0000050001.pt
+state_0000060017.pt
+state_0000070024.pt
+state_0000080005.pt

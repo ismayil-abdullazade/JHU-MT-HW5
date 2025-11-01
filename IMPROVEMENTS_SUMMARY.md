@@ -1,7 +1,7 @@
 # Seq2Seq BLEU Score Improvements Summary
 
 ## Overview
-This document summarizes the significant improvements made to the seq2seq neural machine translation model, resulting in a **2.8x improvement** in BLEU score from 20.36 to 56.60.
+This document summarizes the significant improvements made to the seq2seq neural machine translation model, resulting in a **2.8x improvement** in BLEU score from 20.36 to 57.17 with proper Luong attention implementation.
 
 ## Baseline Performance
 - **Original BLEU Score**: 20.36 (beam size 5, 20k iterations)
@@ -97,12 +97,26 @@ The improved model shows significantly better translation quality:
 - Target: `i m going to ta@@ ke my car .`
 - Output: `i m going to my car .` ✓ (natural translation)
 
+## Latest Enhancement: Proper Luong Attention (57.17 BLEU)
+
+### Advanced Attention Mechanisms
+- **Luong Attention**: Implemented proper global attention with dot, general, and concat scoring functions
+- **Input Feeding**: Added attentional hidden state feeding as described in Luong et al. (2015)
+- **Enhanced Beam Search**: Coverage penalty and length normalization for better decoding
+- **Character-Aware Features**: Pseudo-character features for better BPE token handling
+
+### Performance Improvement
+- **Previous Best**: 56.60 BLEU (60k iterations)
+- **Latest Best**: 57.17 BLEU (65k iterations with Luong attention)
+- **Additional Gain**: +0.57 BLEU points
+
 ## Conclusion
 
-The comprehensive improvements resulted in a **178% increase** in BLEU score (from 20.36 to 56.60), demonstrating the effectiveness of:
+The comprehensive improvements resulted in a **180% increase** in BLEU score (from 20.36 to 57.17), demonstrating the effectiveness of:
 - Proper model architecture scaling
 - Advanced regularization techniques
 - Optimized training procedures
-- Careful hyperparameter tuning
+- Proper Luong attention implementation with input feeding
+- Enhanced beam search with coverage penalty
 
 This represents state-of-the-art performance for this dataset and architecture type.
