@@ -1,0 +1,14 @@
+# Model checkpoints
+*.pt
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Output files
+out.txt
+attention.png
+
+# Logs
+*.log

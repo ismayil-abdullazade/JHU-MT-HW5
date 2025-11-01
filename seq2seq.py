@@ -240,58 +240,64 @@ def collate_fn(batch):
 
 class EncoderRNN(nn.Module):
     """BiLSTM Encoder using PyTorch's nn.LSTM."""
-    def __init__(self, input_size, hidden_size):
+    def __init__(self, input_size, hidden_size, num_layers=2, dropout=0.3):
         super(EncoderRNN, self).__init__()
         self.hidden_size = hidden_size
+        self.num_layers = num_layers
         self.embedding = nn.Embedding(input_size, hidden_size)
-        self.lstm = nn.LSTM(hidden_size, hidden_size, batch_first=True, bidirectional=True)
+        self.dropout = nn.Dropout(dropout)
+        self.lstm = nn.LSTM(hidden_size, hidden_size, num_layers=num_layers, 
+                           batch_first=True, bidirectional=True, dropout=dropout if num_layers > 1 else 0)
 
     def forward(self, input_seqs, input_lengths):
-        embedded = self.embedding(input_seqs)
+        embedded = self.dropout(self.embedding(input_seqs))
         # Pack padded batch of sequences for RNN module
         packed = pack_padded_sequence(embedded, input_lengths.cpu(), batch_first=True)
         outputs, (h_n, c_n) = self.lstm(packed)
         # Unpack
         outputs, _ = pad_packed_sequence(outputs, batch_first=True)
-        # h_n shape: (2, batch_size, hidden_size) -> 0 is fwd, 1 is bwd
-        # c_n shape: (2, batch_size, hidden_size)
+        # h_n shape: (2*num_layers, batch_size, hidden_size) -> last layer: [-2] is fwd, [-1] is bwd
+        # c_n shape: (2*num_layers, batch_size, hidden_size)
         # We use the final backward states to initialize the decoder, like the original paper.
-        final_h = h_n[1]
-        final_c = c_n[1]
+        final_h = h_n[-1]  # Last layer backward
+        final_c = c_n[-1]
         return outputs, (final_h, final_c)
 
 
 class AttnDecoderRNN(nn.Module):
     """Attention Decoder using PyTorch's nn.LSTM."""
-    def __init__(self, hidden_size, output_size, dropout_p=0.1, max_length=MAX_LENGTH):
+    def __init__(self, hidden_size, output_size, num_layers=2, dropout_p=0.3, max_length=MAX_LENGTH):
         super(AttnDecoderRNN, self).__init__()
         self.hidden_size = hidden_size
         self.output_size = output_size
+        self.num_layers = num_layers
         self.embedding = nn.Embedding(self.output_size, self.hidden_size)
         self.dropout = nn.Dropout(dropout_p)
         self.W_attn = nn.Linear(hidden_size, hidden_size, bias=False)
         self.U_attn = nn.Linear(hidden_size * 2, hidden_size, bias=False)
         self.v_attn = nn.Linear(hidden_size, 1, bias=False)
-        self.lstm = nn.LSTM(hidden_size * 3, hidden_size, batch_first=True) # embedding + context
+        self.lstm = nn.LSTM(hidden_size * 3, hidden_size, num_layers=num_layers, 
+                           batch_first=True, dropout=dropout_p if num_layers > 1 else 0) # embedding + context
         self.init_h = nn.Linear(hidden_size, hidden_size)
         self.init_c = nn.Linear(hidden_size, hidden_size)
+        self.layer_norm = nn.LayerNorm(hidden_size)
         self.out = nn.Linear(hidden_size, output_size)
 
     def initialize_states(self, encoder_final_states):
         encoder_h, encoder_c = encoder_final_states
         # Must expand to (num_layers, batch_size, hidden_size) for nn.LSTM
-        initial_h = torch.tanh(self.init_h(encoder_h)).unsqueeze(0)
-        initial_c = torch.tanh(self.init_c(encoder_c)).unsqueeze(0)
+        initial_h = torch.tanh(self.init_h(encoder_h)).unsqueeze(0).repeat(self.num_layers, 1, 1)
+        initial_c = torch.tanh(self.init_c(encoder_c)).unsqueeze(0).repeat(self.num_layers, 1, 1)
         return (initial_h, initial_c)
         
     def forward(self, input, hidden, encoder_outputs):
         # input shape: (batch_size)
-        # hidden tuple: (h, c), each (1, batch_size, hidden_size)
+        # hidden tuple: (h, c), each (num_layers, batch_size, hidden_size)
         embedded = self.dropout(self.embedding(input)).unsqueeze(1) # -> (batch_size, 1, hidden_size)
         h_prev, _ = hidden
 
-        # Attention
-        w_h = self.W_attn(h_prev.squeeze(0)).unsqueeze(1) # (batch, 1, hidden)
+        # Attention - use the top layer's hidden state
+        w_h = self.W_attn(h_prev[-1]).unsqueeze(1) # (batch, 1, hidden)
         u_e = self.U_attn(encoder_outputs)
         attn_scores = self.v_attn(torch.tanh(w_h + u_e)).squeeze(2)
         attn_weights = F.softmax(attn_scores, dim=1)
@@ -301,8 +307,11 @@ class AttnDecoderRNN(nn.Module):
         rnn_input = torch.cat((embedded, context), dim=2) # (batch, 1, hidden*3)
         output, hidden = self.lstm(rnn_input, hidden)
         
+        # Apply layer normalization
+        output = self.layer_norm(output.squeeze(1))
+        
         # Final output
-        output = self.out(output.squeeze(1)) # (batch, vocab_size)
+        output = self.out(output) # (batch, vocab_size)
         log_softmax = F.log_softmax(output, dim=1)
 
         return log_softmax, hidden, attn_weights
@@ -311,7 +320,35 @@ class AttnDecoderRNN(nn.Module):
 ######################################################################
 # TRAINING
 ######################################################################
-def train(src_padded, src_lengths, tgt_padded, encoder, decoder, optimizer, criterion):
+
+class LabelSmoothingLoss(nn.Module):
+    """Label smoothing loss for better generalization."""
+    def __init__(self, vocab_size, smoothing=0.1, ignore_index=PAD_index):
+        super(LabelSmoothingLoss, self).__init__()
+        self.vocab_size = vocab_size
+        self.smoothing = smoothing
+        self.ignore_index = ignore_index
+        self.confidence = 1.0 - smoothing
+        
+    def forward(self, pred, target):
+        # pred: (batch_size, vocab_size) log probabilities
+        # target: (batch_size,) target indices
+        batch_size = pred.size(0)
+        
+        # Create smoothed target distribution
+        true_dist = torch.zeros_like(pred)
+        true_dist.fill_(self.smoothing / (self.vocab_size - 1))
+        true_dist.scatter_(1, target.unsqueeze(1), self.confidence)
+        
+        # Mask out padding tokens
+        mask = (target != self.ignore_index).float()
+        true_dist = true_dist * mask.unsqueeze(1)
+        
+        # Compute KL divergence
+        loss = -torch.sum(true_dist * pred, dim=1)
+        return torch.sum(loss * mask) / torch.sum(mask)
+
+def train(src_padded, src_lengths, tgt_padded, encoder, decoder, optimizer, criterion, max_grad_norm=1.0):
     encoder.train()
     decoder.train()
     optimizer.zero_grad()
@@ -336,6 +373,10 @@ def train(src_padded, src_lengths, tgt_padded, encoder, decoder, optimizer, crit
         loss += criterion(decoder_output, tgt_padded[:, di])
     
     loss.backward()
+    
+    # Gradient clipping
+    torch.nn.utils.clip_grad_norm_(list(encoder.parameters()) + list(decoder.parameters()), max_grad_norm)
+    
     optimizer.step()
     
     return loss.item() / target_len
@@ -479,7 +520,7 @@ def clean(strx):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument('--hidden_size', default=256, type=int)
+    ap.add_argument('--hidden_size', default=512, type=int)  # Increased from 256
     ap.add_argument('--n_iters', default=100000, type=int, help='Total number of training examples')
     ap.add_argument('--print_every', default=5000, type=int)
     ap.add_argument('--checkpoint_every', default=10000, type=int)
@@ -493,11 +534,16 @@ def main():
     ap.add_argument('--load_checkpoint', type=str, help='Checkpoint file to start from')
     ap.add_argument('--batch_size', default=32, type=int, help='Batch size for training')
     ap.add_argument('--beam_size', default=5, type=int, help='Beam size for decoding')
+    ap.add_argument('--num_layers', default=2, type=int, help='Number of LSTM layers')
+    ap.add_argument('--dropout', default=0.3, type=float, help='Dropout rate')
+    ap.add_argument('--label_smoothing', default=0.1, type=float, help='Label smoothing factor')
+    ap.add_argument('--max_grad_norm', default=1.0, type=float, help='Gradient clipping threshold')
+    ap.add_argument('--weight_decay', default=1e-5, type=float, help='Weight decay for regularization')
     args = ap.parse_args()
 
     # Create vocabs
     if args.load_checkpoint:
-        state = torch.load(args.load_checkpoint)
+        state = torch.load(args.load_checkpoint, weights_only=False)
         iter_num = state['iter_num']
         src_vocab, tgt_vocab = state['src_vocab'], state['tgt_vocab']
     else:
@@ -505,8 +551,10 @@ def main():
         src_vocab, tgt_vocab = make_vocabs(args.src_lang, args.tgt_lang, args.train_file)
     
     # Initialize models
-    encoder = EncoderRNN(src_vocab.n_words, args.hidden_size).to(device)
-    decoder = AttnDecoderRNN(args.hidden_size, tgt_vocab.n_words, dropout_p=0.1).to(device)
+    encoder = EncoderRNN(src_vocab.n_words, args.hidden_size, 
+                        num_layers=args.num_layers, dropout=args.dropout).to(device)
+    decoder = AttnDecoderRNN(args.hidden_size, tgt_vocab.n_words, 
+                            num_layers=args.num_layers, dropout_p=args.dropout).to(device)
     
     if args.load_checkpoint:
         encoder.load_state_dict(state['enc_state'])
@@ -518,8 +566,16 @@ def main():
     train_dataloader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, collate_fn=collate_fn)
     
     params = list(encoder.parameters()) + list(decoder.parameters())
-    optimizer = optim.Adam(params, lr=args.initial_learning_rate)
-    criterion = nn.NLLLoss(ignore_index=PAD_index) # Ignore padding
+    optimizer = optim.AdamW(params, lr=args.initial_learning_rate, weight_decay=args.weight_decay)
+    
+    # Use label smoothing if specified, otherwise use standard NLLLoss
+    if args.label_smoothing > 0:
+        criterion = LabelSmoothingLoss(tgt_vocab.n_words, smoothing=args.label_smoothing)
+    else:
+        criterion = nn.NLLLoss(ignore_index=PAD_index) # Ignore padding
+
+    # Learning rate scheduler
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='max', factor=0.5, patience=2)
 
     if args.load_checkpoint:
         optimizer.load_state_dict(state['opt_state'])
@@ -533,7 +589,7 @@ def main():
             if iter_num >= args.n_iters: break
             
             src_padded, src_lengths, tgt_padded, _ = batch
-            loss = train(src_padded, src_lengths, tgt_padded, encoder, decoder, optimizer, criterion)
+            loss = train(src_padded, src_lengths, tgt_padded, encoder, decoder, optimizer, criterion, args.max_grad_norm)
             print_loss_total += loss
             
             iter_num += src_padded.size(0)
@@ -555,6 +611,9 @@ def main():
                 dev_bleu = corpus_bleu(references, candidates) * 100
                 logging.info('Dev BLEU score (beam=%d): %.2f', args.beam_size, dev_bleu)
                 translate_random_sentence(encoder, decoder, dev_pairs, src_vocab, tgt_vocab, n=2, beam_size=args.beam_size)
+                
+                # Update learning rate based on BLEU score
+                scheduler.step(dev_bleu)
 
             if iter_num % args.checkpoint_every < args.batch_size:
                 state = {'iter_num': iter_num, 'enc_state': encoder.state_dict(), 'dec_state': decoder.state_dict(),
