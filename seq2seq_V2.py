@@ -456,12 +456,23 @@ def translate(encoder, decoder, sentence, src_vocab, tgt_vocab, char_vocab, beam
     decoder.eval()
     
     with torch.no_grad():
+        # This adds EOS, creating a tensor of length N+1
         input_tensor = tensor_from_sentence(src_vocab, sentence).unsqueeze(0)
         input_length = torch.tensor([input_tensor.size(1)], device=device)
         char_indices = None
         if encoder.use_char_encoder:
+            # Create char tensors for the original sentence (length N)
             char_list = sentence_to_char_indices(sentence, char_vocab)
-            max_word_len = max(len(c) for c in char_list)
+            
+            # --- START OF FIX ---
+            # Manually add the character representation for the <EOS> token to match the word tensor.
+            # sentence_to_char_indices returns a list of tensors, so we get the first (and only) element.
+            eos_char_tensor = sentence_to_char_indices(EOS_token, char_vocab)[0]
+            char_list.append(eos_char_tensor)
+            # --- END OF FIX ---
+
+            # Now, len(char_list) is N+1, which correctly matches input_tensor's length
+            max_word_len = max(len(c) for c in char_list) if char_list else 0
             padded_chars = torch.zeros(1, len(char_list), max_word_len, dtype=torch.long, device=device)
             for i, char_tensor in enumerate(char_list):
                 padded_chars[0, i, :len(char_tensor)] = char_tensor
@@ -507,7 +518,8 @@ def translate(encoder, decoder, sentence, src_vocab, tgt_vocab, char_vocab, beam
                     # Repetition Penalty
                     if repetition_penalty > 0:
                         for token_id in set(tokens):
-                            log_probs[0][token_id] -= repetition_penalty
+                            if token_id < len(log_probs[0]): # bounds check
+                                log_probs[0][token_id] -= repetition_penalty
 
                     topv, topi = log_probs.data.topk(beam_size)
                     
