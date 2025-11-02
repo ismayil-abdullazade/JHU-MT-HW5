@@ -615,8 +615,8 @@ def main():
             SENTENCES_TO_BENCHMARK = 1024
             speed = benchmark_training_speed(encoder, decoder, train_pairs, src_vocab, tgt_vocab, 
                                             n_iters=SENTENCES_TO_BENCHMARK, lr=args.initial_learning_rate)
-            logging.info("Benchmark complete.")
-            logging.info(f"Training Speed (batch_size=1): {speed:.2f} sentences/sec")
+            print("Benchmark complete.")
+            print(f"Training Speed (batch_size=1): {speed:.2f} sentences/sec")
             return # Exit after the benchmark
 
     # set up optimization/loss

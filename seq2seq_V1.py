@@ -839,8 +839,8 @@ def main():
             encoder, decoder, train_pairs, src_vocab, tgt_vocab,
             args.batch_size, n_sentences_to_process=SENTENCES_TO_BENCHMARK
         )
-        logging.info("Benchmark complete.")
-        logging.info(f"Training Speed (batch_size={args.batch_size}): {sentences_per_sec:.2f} sentences/sec")
+        print("Benchmark complete.\n")
+        print(f"Training Speed (batch_size={args.batch_size}): {sentences_per_sec:.2f} sentences/sec")
         return
 
     if args.translate_only:
