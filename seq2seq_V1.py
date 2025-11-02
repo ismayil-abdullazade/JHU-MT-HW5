@@ -792,7 +792,8 @@ def main():
     if args.load_checkpoint:
         logging.info('loading checkpoint from %s', args.load_checkpoint[0])
         checkpoint = torch.load(args.load_checkpoint[0],
-                                map_location=device)
+                                map_location=device,
+                                weights_only=False)
         src_vocab = checkpoint['src_vocab']
         tgt_vocab = checkpoint['tgt_vocab']
     else:
@@ -869,4 +870,5 @@ def main():
 
 
 if __name__ == '__main__':
+
     main()
