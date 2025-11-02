@@ -564,15 +564,22 @@ def clean(strx):
 def evaluate_bleu(encoder, decoder, pairs, src_vocab, tgt_vocab,
                  use_beam_search=False, beam_width=5):
     """Evaluate BLEU score."""
+    logging.info("Starting translation for BLEU evaluation...")
     translated_sentences = translate_sentences(
         encoder, decoder, pairs, src_vocab, tgt_vocab,
-        use_beam_search=use_beam_search, beam_width=beam_width
+        use_beam_search=use_beam_search, beam_width=beam_width,
+        max_num_sentences=len(pairs) # Ensure all pairs are translated
     )
-    
+    logging.info("Translation finished. Preparing references and candidates...")
+
+    references = []
+    candidates = []
+
     references = [[clean(pair[1]).split(), ] for pair in pairs[:len(translated_sentences)]]
     candidates = [clean(sent).split() for sent in translated_sentences]
     
     bleu = corpus_bleu(references, candidates)
+    
     return bleu
 
 
@@ -621,8 +628,15 @@ def translate_and_show_attention(input_sentence, encoder, decoder, src_vocab, tg
 ######################################################################
 
 def benchmark_training_speed(encoder, decoder, train_pairs, src_vocab, tgt_vocab,
-                            batch_size, n_batches=50):
-    """Benchmark training speed."""
+                             batch_size, n_sentences_to_process=1024):
+    """Benchmark training speed for the batched model."""
+    import math # Import math for ceiling division
+    
+    # Calculate the minimum number of batches to process
+    n_batches = math.ceil(n_sentences_to_process / batch_size)
+    
+    logging.info(f"Running benchmark for {n_batches} batches to process at least {n_sentences_to_process} sentences...")
+
     train_dataset = TranslationDataset(train_pairs, src_vocab, tgt_vocab)
     train_loader = DataLoader(
         train_dataset, 
@@ -641,23 +655,22 @@ def benchmark_training_speed(encoder, decoder, train_pairs, src_vocab, tgt_vocab
     start_time = time.time()
     total_examples = 0
     
-    for batch_idx, (src_seqs, src_lengths, tgt_seqs, tgt_lengths) in enumerate(train_loader):
-        if batch_idx >= n_batches:
+    # Loop for just the required number of batches
+    for i, (src_seqs, src_lengths, tgt_seqs, tgt_lengths) in enumerate(train_loader):
+        if i >= n_batches:
             break
-        
-        src_seqs = src_seqs.to(device)
-        src_lengths = src_lengths.to(device)
-        tgt_seqs = tgt_seqs.to(device)
-        tgt_lengths = tgt_lengths.to(device)
+            
+        src_seqs, tgt_seqs = src_seqs.to(device), tgt_seqs.to(device)
         
         train_batch(src_seqs, src_lengths, tgt_seqs, tgt_lengths,
                    encoder, decoder, optimizer, criterion)
         
         total_examples += src_seqs.size(0)
-    
+
     elapsed_time = time.time() - start_time
     sentences_per_sec = total_examples / elapsed_time
     
+    logging.info(f"Benchmark processed {total_examples} sentences in {elapsed_time:.2f} seconds.")
     return sentences_per_sec
 
 
@@ -820,12 +833,14 @@ def main():
     # Handle different execution modes
     if args.benchmark_only:
         train_pairs = split_lines(args.train_file)
+        SENTENCES_TO_BENCHMARK = 1024
         logging.info("Benchmarking training speed...")
         sentences_per_sec = benchmark_training_speed(
             encoder, decoder, train_pairs, src_vocab, tgt_vocab,
-            args.batch_size
+            args.batch_size, n_sentences_to_process=SENTENCES_TO_BENCHMARK
         )
-        logging.info("Training speed: %.2f sentences/sec", sentences_per_sec)
+        logging.info("Benchmark complete.")
+        logging.info(f"Training Speed (batch_size={args.batch_size}): {sentences_per_sec:.2f} sentences/sec")
         return
 
     if args.translate_only:
@@ -870,5 +885,4 @@ def main():
 
 
 if __name__ == '__main__':
-
     main()

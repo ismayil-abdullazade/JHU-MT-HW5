@@ -509,6 +509,41 @@ def clean(strx):
 
 ######################################################################
 
+def benchmark_training_speed(encoder, decoder, train_pairs, src_vocab, tgt_vocab, n_iters=1000, lr=0.001):
+    """
+    Measures training speed for the non-batched model.
+    Returns:
+        float: Training speed in sentences per second.
+    """
+    logging.info(f"Running benchmark for {n_iters} iterations (sentences)...")
+
+    # Set up a temporary optimizer and loss function for the benchmark
+    params = list(encoder.parameters()) + list(decoder.parameters())
+    optimizer = optim.Adam(params, lr=lr)
+    criterion = nn.NLLLoss()
+
+    # Make sure models are in training mode
+    encoder.train()
+    decoder.train()
+
+    start_time = time.time()
+
+    for _ in range(n_iters):
+        # The core training step from the original loop
+        training_pair = tensors_from_pair(src_vocab, tgt_vocab, random.choice(train_pairs))
+        input_tensor = training_pair[0]
+        target_tensor = training_pair[1]
+        train(input_tensor, target_tensor, encoder, decoder, optimizer, criterion)
+    
+    end_time = time.time()
+    elapsed_time = end_time - start_time
+    
+    # Speed is the number of sentences processed divided by time
+    sentences_per_sec = n_iters / elapsed_time
+    
+    return sentences_per_sec
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--hidden_size', default=256, type=int,
@@ -541,6 +576,8 @@ def main():
                     help='output file for test translations')
     ap.add_argument('--load_checkpoint', nargs=1,
                     help='checkpoint file to start from')
+    ap.add_argument('--benchmark_only', action='store_true',
+                    help='Run a short benchmark to measure sentences/sec and exit')
 
     args = ap.parse_args()
 
@@ -572,6 +609,15 @@ def main():
     train_pairs = split_lines(args.train_file)
     dev_pairs = split_lines(args.dev_file)
     test_pairs = split_lines(args.test_file)
+
+    if args.benchmark_only:
+            # We will process exactly 1024 sentences for a fast but precise test.
+            SENTENCES_TO_BENCHMARK = 1024
+            speed = benchmark_training_speed(encoder, decoder, train_pairs, src_vocab, tgt_vocab, 
+                                            n_iters=SENTENCES_TO_BENCHMARK, lr=args.initial_learning_rate)
+            logging.info("Benchmark complete.")
+            logging.info(f"Training Speed (batch_size=1): {speed:.2f} sentences/sec")
+            return # Exit after the benchmark
 
     # set up optimization/loss
     params = list(encoder.parameters()) + list(decoder.parameters())  # .parameters() returns generator
